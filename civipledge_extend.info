@@ -1,0 +1,5 @@
+; $Id$
+name = Extend CiviCRM Pledge installments
+description = Retrospectively adjust a pledge
+package = CiviCRM
+core = 7.x

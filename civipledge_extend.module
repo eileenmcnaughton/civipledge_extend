@@ -1,0 +1,184 @@
+<?php
+
+function civipledge_extend_menu() {
+  return array(
+    'civicrm/civipledge/%/%' => array(
+      'title' => 'civipledge',
+      'type' => MENU_CALLBACK,
+      'page callback' => '_civicrm_finder_results',
+      'page arguments' => array(2, 3),
+      'access arguments' => array('view all contacts'),
+    ),
+  );
+}
+
+function civipledge_extend_block_info() {
+  return array(
+    'civipledge_extend' => array(
+      'info' => t('CiviCRM Pledge Extender'),
+      'cache' => DRUPAL_CACHE_GLOBAL,
+    ),
+  );
+}
+
+function civipledge_extend_block_view($delta = '') {
+  $block = array();
+  if ($delta == 'civipledge_extend') {
+    $block['content'] = drupal_get_form('civipledge_extend_form');
+  }
+  return $block;
+}
+
+/*
+ * Implement drupal form hook
+ */
+function civipledge_extend_form() {
+  $form = array();
+  $form['container'] = array(
+    '#type'             => 'fieldset',
+    '#title'            => t('Pledge Extension Form'),
+    '#description'      => t('use with CARE'),
+  );
+
+  $form['container']['contact_id'] = array (
+    '#type'             => 'textfield',
+    '#size'             => 20,
+    '#title'            =>  t('Enter Contact ID here'),
+    '#default_value'    => empty($_GET['cid'])? '' : $_GET['cid'],
+  );
+  $form['container']['pledge_id'] = array (
+    '#type'             => 'textfield',
+    '#size'             => 20,
+    '#title'            =>  t('Enter Pledge ID here')
+  );
+
+  $form['container']['installments'] = array (
+    '#type'             => 'textfield',
+    '#size'             => 20,
+    '#title'            =>  t('Enter correct installments number'),
+    '#default_value'    => 36,
+  );
+
+
+  $form['submit'] = array (
+    '#type'             => 'submit',
+    '#value'            => t('Submit')
+  );
+  return $form;
+}
+/*
+ * Implement Form submit hook
+*/
+function civipledge_extend_form_submit($form, &$form_state) {
+  $values = $form_state['values'];
+  adjustPledge($values['pledge_id'], $values['contact_id'], $values['installments']);
+
+}
+/*
+ *
+ */
+function civipledge_extend_form_validate($form, &$form_state){
+  $values = $form_state['values'];
+  $pledge = civicrm_api('pledge', 'get', array(
+    'id' => $values['pledge_id'],
+    'version' => 3,
+    'contact_id' => $values['contact_id'],
+    ));
+  if( $pledge['count'] != 1 ) {
+    form_set_error('pledge_id', t('Pledge id is not valid for that contact.'));
+  }
+
+}
+
+
+
+function adjustPledge($pledgeID, $contactID, $numberMonths = 36){
+
+  civicrm_initialize();
+
+  $pledge = civicrm_api('pledge', 'getsingle', array(
+    'id' => $pledgeID,
+    'version' => 3
+  ));
+
+  $existing = civicrm_api('pledge_payment', 'get', array(
+    'pledge_id' => $pledgeID,
+    'version' => 3,
+    'sequential' => 1,
+    'api.contribution.get' => 1
+  ));
+
+
+  $installmentAmount = $existing['values'][$existing['count'] - 1]['scheduled_amount']. "\n";
+  $firstCont = $existing['values'][0]['api.contribution.get']['values'][0];
+
+  $startMonth = $existing['values'][$existing['count'] - 1]['scheduled_date'];
+  $currentDate = date_create($startMonth);
+  date_add($currentDate, date_interval_create_from_date_string('1 month'));
+  $now = new DateTime("now");
+
+  civicrm_api('pledge', 'create', array(
+  'id' => $pledgeID,
+  'version' => 3,
+  'installments' => $numberMonths,
+  'pledge_status_id' => 2,
+  'pledge_amount' => $installmentAmount * $numberMonths,
+  ));
+
+  if($pledge['frequency_unit'] == 'quarter'){
+    $frequency = '3 months';
+  }
+  else{
+    $frequency = '1 month';
+  }
+
+  $pledgePayments = $existing['count'];
+  drupal_set_message( $pledgePayments . " paid payments already existed for pledge   " . $pledgeID);
+  if($currentDate < $now){
+    echo "current less now ";
+  }
+  while ($currentDate < $now && $pledgePayments < $numberMonths) {
+    $params = array(
+      'version' => 3,
+      'contact_id' => $contactID,
+      'installmentAmount' => $installmentAmount ,
+      'receive_date' => date_format($currentDate, 'Y-m-d'),
+      'contribution_type_id' => 1,
+      'total_amount' => $installmentAmount,
+      'payment_instrument_id' => 1,
+      'contribution_page_id' => 7,
+      'fee_amount' => $firstCont['fee_amount'],
+      'net_amount' => $firstCont['net_amount'],
+      'source' => 're-instated: ' . $firstCont['contribution_source'],
+      'contribution_recur_id' => $firstCont['contribution_recur_id'],
+
+      'api.pledge_payment.create' => array(
+        'status_id' => 1,
+        'option.create_new' => 1,
+        'scheduled_date' => date_format($currentDate, 'Y-m-d'),
+        'scheduled_amount' => $installmentAmount,
+        'actual_amount' => $installmentAmount,
+        'pledge_id' => $pledgeID
+      )
+    );
+    date_add($currentDate, date_interval_create_from_date_string($frequency));
+    $pledgePayments ++;
+  }
+  drupal_set_message( $pledgePayments . " paid payments now exist for pledge " . $pledgeID);
+
+  while ($pledgePayments < $numberMonths) {
+    $pParams = array(
+      'status_id' => 2,
+      'option.create_new' => 1,
+      'scheduled_date' => date_format($currentDate, 'Y-m-d'),
+      'scheduled_amount' => $installmentAmount,
+      'actual_amount' => $installmentAmount,
+      'pledge_id' => $pledgeID,
+      'version' => 3
+    );
+    civicrm_api('pledge_payment', 'create', $pParams);
+    $pledgePayments ++;
+  }
+  drupal_set_message( $pledgePayments . " payment installments now exist for pledge " . $pledgeID);
+
+}
