@@ -91,7 +91,13 @@ function civipledge_extend_form_validate($form, &$form_state){
 }
 
 
-
+/**
+ * Increase duration of pledge, adding missed payments
+ *
+ * @param integer $pledgeID
+ * @param integer $contactID
+ * @param integer $numberMonths
+ */
 function adjustPledge($pledgeID, $contactID, $numberMonths = 36){
 
   civicrm_initialize();
@@ -134,9 +140,7 @@ function adjustPledge($pledgeID, $contactID, $numberMonths = 36){
 
   $pledgePayments = $existing['count'];
   drupal_set_message( $pledgePayments . " paid payments already existed for pledge   " . $pledgeID);
-  if($currentDate < $now){
-    echo "current less now ";
-  }
+
   while ($currentDate < $now && $pledgePayments < $numberMonths) {
     $params = array(
       'version' => 3,
@@ -147,11 +151,10 @@ function adjustPledge($pledgeID, $contactID, $numberMonths = 36){
       'total_amount' => $installmentAmount,
       'payment_instrument_id' => 1,
       'contribution_page_id' => 7,
-      'fee_amount' => $firstCont['fee_amount'],
-      'net_amount' => $firstCont['net_amount'],
+      'fee_amount' => (int) $firstCont['fee_amount'],
+      'net_amount' => $installmentAmount - (int) $firstCont['net_amount'],
       'source' => 're-instated: ' . $firstCont['contribution_source'],
       'contribution_recur_id' => $firstCont['contribution_recur_id'],
-
       'api.pledge_payment.create' => array(
         'status_id' => 1,
         'option.create_new' => 1,
@@ -161,6 +164,7 @@ function adjustPledge($pledgeID, $contactID, $numberMonths = 36){
         'pledge_id' => $pledgeID
       )
     );
+    civicrm_api('contribution', 'create', $params);
     date_add($currentDate, date_interval_create_from_date_string($frequency));
     $pledgePayments ++;
   }
